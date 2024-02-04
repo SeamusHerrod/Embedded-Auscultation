@@ -2,6 +2,7 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <SPIFFS.h>
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
@@ -11,6 +12,25 @@ uint i = 0;
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting BLE work!");
+
+  // intialize SPIFFS 
+  if (!SPIFFS.begin(true)) {
+    Serial.println("an error occurred while mounting SPIFFS");
+    return;
+  }
+
+  File file = SPIFFS.open("/message.txt", FILE_WRITE);
+  if (!file) {
+    Serial.println("error opening file for writing");
+    return;
+  }
+  if (file.print("Hello from the SPIFF file system")) {
+    Serial.println("File was written");
+  }
+  else {
+    Serial.println("file write failed");
+  }
+  file.close();
 
   BLEDevice::init("XIAO_ESP32S3");
   BLEServer *pServer = BLEDevice::createServer();
@@ -37,9 +57,18 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   if (i == 0) pCharacteristic->setValue("Hello World");
-  i++;
+  //i++;
+  File file = SPIFFS.open("/message.txt");
+  if (!file) {
+    Serial.println("failed to open file for reading");
+    return;
+  }
+  String message = file.readString();
+  file.close();
+
+  pCharacteristic->setValue(message.c_str());
   delay(10000);
-  char buf[50];
-  sprintf(buf, "%u", i);
-  pCharacteristic->setValue(buf);
+  //char buf[50];
+  //sprintf(buf, "%u", i);
+  //pCharacteristic->setValue(buf);
 }
