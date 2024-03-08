@@ -6,12 +6,41 @@
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+//#define CONTROL_CHARACTERISTIC_UUID "a1b2c3d4-e5f6-4788-b7f5-ea07361b26a8"
+
 #define SAMPLES_RATE 8000 
 #define SAMPLE_SIZE 2 // 2 bytes for 16-bit audio 
 #define ADC_PIN 14
 BLECharacteristic *pCharacteristic;
 uint i = 0;
 
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      //std::string value = pCharacteristic->getValue();
+
+      //if (value == "1") {
+        // Start file transfer
+        File file = SPIFFS.open("/audio.wav");
+        if (!file) {
+          Serial.println("failed to open file for reading");
+          return;
+        }
+        uint16_t mtu = BLEDevice::getMTU();
+        uint8_t buffer[mtu]; // buffer size == BLE MTU 
+        int bytesRead;
+        while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {
+          pCharacteristic->setValue(buffer, bytesRead);
+          pCharacteristic->notify();
+          Serial.println("Data sent");
+          //delay(20); // 20ms delay to allow app time to process
+        }
+        file.close();
+        pCharacteristic->setValue("\0");
+        pCharacteristic->notify();
+        return;
+      }
+    //}
+};
 
 void setup() {
   Serial.begin(115200);
@@ -27,8 +56,13 @@ void setup() {
                                          BLECharacteristic::PROPERTY_WRITE |
                                          BLECharacteristic::PROPERTY_NOTIFY
                                        );
-
-  pCharacteristic->setValue("Hello World");
+  pCharacteristic->setCallbacks(new MyCallbacks());
+                        
+  //BLECharacteristic *pControlCharacteristic = pService->createCharacteristic(
+  //                                       CONTROL_CHARACTERISTIC_UUID,
+  //                                       BLECharacteristic::PROPERTY_WRITE
+  //                                     );
+  //pControlCharacteristic->setCallbacks(new MyCallbacks());
   pService->start();
   // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -89,7 +123,7 @@ void setup() {
   file.write((byte)0);
 
   int dataSize = 0;
-  for (int i = 0; i < SAMPLES_RATE * 10; i++) { // 10 second recording
+  for (int i = 0; i < SAMPLES_RATE * 3; i++) { // 10 second recording
     int audioData = analogRead(ADC_PIN);
     file.write((byte)(audioData & 0xff));
     file.write((byte)((audioData >> 8) & 0xff));
@@ -109,30 +143,8 @@ void setup() {
   file.write((byte)((dataSize >> 24) & 0xff));
 
   file.close();
-
-
-
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
 
-  File file = SPIFFS.open("/audio.wav");
-  if (!file) {
-    Serial.println("failed to open file for reading");
-    return;
-  }
-  uint16_t mtu = BLEDevice::getMTU();
-  uint8_t buffer[mtu]; // buffer size == BLE MTU 
-  int bytesRead;
-  while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {
-    pCharacteristic->setValue(buffer, bytesRead);
-    pCharacteristic->notify();
-    delay(20); // 20ms delay to allow app time to process
-  }
-
-  file.close();
-  pCharacteristic->setValue("File Finished")
-
-  delay(10000);
 }
