@@ -5,14 +5,43 @@
 #include <SPIFFS.h>
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-//#define CONTROL_CHARACTERISTIC_UUID "a1b2c3d4-e5f6-4788-b7f5-ea07361b26a8"
-
+#define CHARACTERISTIC_NOTIFY_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CHARACTERISTIC_SETUP_UUID "8e632a60-ff9d-4f75-8899-ca76b3b3dfec"
+// #define CHARACTERISTIC_TEST_UUID "bf44ba3a-d0b3-4341-accc-3847f2e55486"
 #define SAMPLES_RATE 8000 
 #define SAMPLE_SIZE 2 // 2 bytes for 16-bit audio 
 #define ADC_PIN 14
+#define bleServerName "ENGINEOUS_BLE"
+
 BLECharacteristic *pCharacteristic;
-uint i = 0;
+BLECharacteristic *pCharacteristicSetup;
+// BLECharacteristic *pCharacteristicTest1;
+bool initialConnection = true;
+bool deviceConnected = false;
+int recordTime = 10; // in seconds
+
+class MyServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    Serial.println("Connect Callback");
+    deviceConnected = true;
+  };
+  
+  void onDisconnect(BLEServer* pServer) {
+    Serial.println("Disconnect Callback");
+    deviceConnected = false;
+  }
+};
+
+class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
+  void onNotify(BLECharacteristic* pCharacteristic) {
+    Serial.println("Notify Callback");
+  };
+  
+  void onWrite(BLECharacteristic* pCharacteristic) {
+    Serial.println("Write Callback: Characteristics setup completed");
+    initialConnection = false;
+  }
+};
 
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
@@ -46,23 +75,24 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting BLE work!");
 
-  // setup BLE server 
-  BLEDevice::init("XIAO_ESP32S3");
+  // setup BLE server
+  BLEDevice::init(bleServerName);
+  BLEDevice::setMTU(100);
   BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
   BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristicSetup = pService->createCharacteristic(
+                                         CHARACTERISTIC_SETUP_UUID,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristicSetup->setCallbacks(new MyCharacteristicCallbacks());
   pCharacteristic = pService->createCharacteristic(
-                                         CHARACTERISTIC_UUID,
-                                         BLECharacteristic::PROPERTY_READ |
-                                         BLECharacteristic::PROPERTY_WRITE |
+                                         CHARACTERISTIC_NOTIFY_UUID,
                                          BLECharacteristic::PROPERTY_NOTIFY
                                        );
   pCharacteristic->setCallbacks(new MyCallbacks());
-                        
-  //BLECharacteristic *pControlCharacteristic = pService->createCharacteristic(
-  //                                       CONTROL_CHARACTERISTIC_UUID,
-  //                                       BLECharacteristic::PROPERTY_WRITE
-  //                                     );
-  //pControlCharacteristic->setCallbacks(new MyCallbacks());
+  
   pService->start();
   // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -123,12 +153,14 @@ void setup() {
   file.write((byte)0);
 
   int dataSize = 0;
-  for (int i = 0; i < SAMPLES_RATE * 3; i++) { // 10 second recording
+  Serial.println("Recording started");
+  for (int i = 0; i < SAMPLES_RATE * recordTime; i++) {
     int audioData = analogRead(ADC_PIN);
     file.write((byte)(audioData & 0xff));
     file.write((byte)((audioData >> 8) & 0xff));
     dataSize += 2;
   }
+  Serial.println("Recording ended");
 
   file.seek(4);
   int fileSize = 36 + dataSize;
@@ -143,8 +175,38 @@ void setup() {
   file.write((byte)((dataSize >> 24) & 0xff));
 
   file.close();
+
+  Serial.println("Setup call completed");
 }
 
 void loop() {
+  // put your main code here, to run repeatedly:
+  if (deviceConnected) {
+    // If notify starts before characteristic setup, it throws an error
+    if (initialConnection) {
+      Serial.println("Initial connection begins");
+      while(initialConnection) {
+        delay(20); //TODO - check if decreasing to 10, increase the speed
+      }
+      Serial.println("Initial connection finished");
+    }
 
+    File file = SPIFFS.open("/audio.wav");
+    if (!file) {
+      Serial.println("failed to open file for reading");
+      return;
+    }
+    uint16_t mtu = BLEDevice::getMTU();
+    uint8_t buffer[mtu]; // buffer size == BLE MTU 
+    int bytesRead;
+    delay(10); // delay to allow app time to process
+    while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {    
+      pCharacteristic->setValue(buffer, bytesRead);
+      pCharacteristic->notify();
+    }
+    Serial.println("Notify completed");
+    file.close();
+    delay(10000);
+    // TODO - Implement write message once file transfer is complete
+  }
 }
